@@ -1,0 +1,17 @@
+# Environment files and secrets
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Uploaded videos and extracted frames
+backend/uploads/videos/
+backend/uploads/frames/
+
+# Dependencies and build output
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+frontend/dist/

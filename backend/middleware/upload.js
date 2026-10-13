@@ -1,0 +1,45 @@
+const multer = require("multer");
+const path = require("path");
+const { v4: uuidv4 } = require("uuid");
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads/videos");
+  },
+
+  filename: (req, file, cb) => {
+    const extension = path.extname(file.originalname).toLowerCase();
+
+    cb(null, `${uuidv4()}${extension}`);
+  },
+});
+
+const allowedTypes = [
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+  "video/mpeg",
+];
+
+const fileFilter = (req, file, cb) => {
+  if (!allowedTypes.includes(file.mimetype)) {
+    return cb(
+      new Error(
+        "Unsupported video format. Allowed formats: MP4, WebM, MOV, MPEG."
+      )
+    );
+  }
+
+  cb(null, true);
+};
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 500 * 1024 * 1024,
+    files: 1,
+  },
+});
+
+module.exports = upload;
