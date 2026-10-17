@@ -61,6 +61,26 @@ Ollama is **not required**. Both frame descriptions and embeddings use Cloudflar
 
 The backend is hosted on Render's free service, which may sleep after inactivity and take a little time to respond to the first request. The frontend and backend are deployed separately.
 
+## Screenshots
+
+### Selected video scene
+
+<p align="center">
+  <img src="docs/screenshots/search-playback.png" alt="Selected video scene from a search result" width="900">
+</p>
+
+### Semantic search results
+
+<p align="center">
+  <img src="docs/screenshots/search-results.png" alt="Natural-language search results with frame thumbnails, descriptions, and timestamps" width="900">
+</p>
+
+### Video upload and indexing
+
+<p align="center">
+  <img src="docs/screenshots/video-upload.png" alt="Video upload form and indexing status" width="900">
+</p>
+
 ## Run locally
 
 ### Prerequisites
