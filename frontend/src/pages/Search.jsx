@@ -206,8 +206,15 @@ const Search = () => {
                       >
                         {" "}
                         <img
-                          src={`${import.meta.env.VITE_API_URL}${result.frameUrl}`}
-                          alt=""
+                          src={
+                            result.frameUrl
+                              ? /^https?:\/\//i.test(result.frameUrl)
+                                ? result.frameUrl
+                                : `${import.meta.env.VITE_API_URL}${result.frameUrl}`
+                              : ""
+                          }
+                          alt={`Video frame at ${formatTimestamp(result.timestamp)}`}
+                          loading="lazy"
                           className="h-24 w-40 shrink-0 rounded-lg object-cover"
                         />{" "}
                         <div className="min-w-0 flex-1">
