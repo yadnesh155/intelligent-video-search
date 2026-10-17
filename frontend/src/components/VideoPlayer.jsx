@@ -2,47 +2,80 @@ import { useEffect, useRef } from "react";
 
 const VideoPlayer = ({ videoUrl, timestamp }) => {
   const videoRef = useRef(null);
-  const previousVideoUrl = useRef(null);
+  const currentTimestamp = useRef(timestamp);
 
-  const fullVideoUrl = `${import.meta.env.VITE_API_URL}${videoUrl}`;
-
-  // JOB 1: Switch the video file only when the URL changes
   useEffect(() => {
-    if (!videoRef.current || !videoUrl) return;
+    currentTimestamp.current = timestamp;
+  }, [timestamp]);
 
-    // If it's the same video file, don't reload it!
-    if (previousVideoUrl.current === videoUrl) return;
+  // Seek to the selected timestamp and attempt playback.
+  const seekAndPlay = (video, target) => {
+    try {
+      video.currentTime = Math.max(0, Number(target) || 0);
 
-    // Track the new video file name
-    previousVideoUrl.current = videoUrl;
+      const playPromise = video.play();
 
-    // Load the new file into the player
-    videoRef.current.src = fullVideoUrl;
-    videoRef.current.load();
+      if (playPromise !== undefined) {
+        playPromise.catch((error) => {
+          console.warn("Automatic playback was blocked by the browser:", error);
+        });
+      }
+    } catch (error) {
+      console.error("Unable to seek or play video:", error);
+    }
+  };
 
-    // Wait for the video to load, then jump to the initial timestamp
-    const handleMetadataLoaded = () => {
-      videoRef.current.currentTime = timestamp || 0;
+  // Load the selected video and seek after metadata is ready.
+  useEffect(() => {
+    const video = videoRef.current;
+
+    if (!video || !videoUrl) return;
+
+    const fullVideoUrl = /^https?:\/\//i.test(videoUrl)
+      ? videoUrl
+      : `${import.meta.env.VITE_API_URL}${videoUrl}`;
+
+    let cancelled = false;
+
+    const handleLoadedMetadata = () => {
+      if (cancelled) return;
+      seekAndPlay(video, currentTimestamp.current);
     };
 
-    videoRef.current.addEventListener("loadedmetadata", handleMetadataLoaded, { once: true });
-  }, [videoUrl]); // Only runs when videoUrl changes
+    video.addEventListener("loadedmetadata", handleLoadedMetadata, {
+      once: true,
+    });
 
-  // JOB 2: Fast-jump timestamps if the video is already loaded
-  useEffect(() => {
-    if (!videoRef.current || !videoUrl) return;
-
-    // If the video is already playing, just instantly snap to the new time
-    if (previousVideoUrl.current === videoUrl && videoRef.current.readyState >= 1) {
-      videoRef.current.currentTime = timestamp || 0;
+    // Avoid unnecessary reloads when the same video is selected.
+    if (video.getAttribute("src") !== fullVideoUrl) {
+      video.src = fullVideoUrl;
+      video.load();
+    } else if (video.readyState >= 1) {
+      handleLoadedMetadata();
     }
-  }, [timestamp]); // Only runs when timestamp changes
+
+    return () => {
+      cancelled = true;
+      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
+    };
+  }, [videoUrl]);
+
+  // Seek and attempt playback when another timestamp is selected.
+  useEffect(() => {
+    const video = videoRef.current;
+
+    if (!video || !videoUrl || video.readyState < 1) return;
+
+    seekAndPlay(video, timestamp);
+  }, [timestamp, videoUrl]);
 
   return (
     <video
       ref={videoRef}
       controls
-      width="800"
+      playsInline
+      preload="metadata"
+      className="block h-full w-full max-w-full bg-black object-contain"
     />
   );
 };

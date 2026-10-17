@@ -55,6 +55,9 @@ const Search = () => {
     }
   };
   const handleResultClick = (result) => {
+    console.log("Selected video:", result.videoName);
+    console.log("Selected timestamp:", result.timestamp);
+
     setSelectedResult(result);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };

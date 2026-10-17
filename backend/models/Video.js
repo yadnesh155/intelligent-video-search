@@ -18,6 +18,11 @@ const videoSchema = new mongoose.Schema(
             required: true,
         },
 
+        storagePath: {
+        type: String,
+        default: null,
+        },
+
         duration: {
             type: Number,
             default: 0,

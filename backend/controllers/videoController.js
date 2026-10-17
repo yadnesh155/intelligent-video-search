@@ -8,18 +8,53 @@ const deleteVideoAssets = require("../utils/deleteVideoAssets");
 const processVideo = require("../services/video/videoProcessor");
 const { retryFailedFrames } = require("../services/ai/frameAnalyzer");
 
+const fs = require("fs/promises");
+
+const {
+  uploadLocalFile,
+  removeFiles,
+} = require("../services/storage/supabaseStorage.service");
+
 const uploadVideo = async (req, res) => {
   if (!req.file) {
     throw new AppError("No video file uploaded", 400);
   }
 
-  const video = await Video.create({
-    originalName: req.file.originalname,
-    filename: req.file.filename,
-    path: req.file.path,
-    processingStatus: "pending",
-  });
+  const storagePath = `videos/${req.file.filename}`;
 
+  // Upload the video to persistent cloud storage.
+  try {
+    await uploadLocalFile(
+      req.file.path,
+      storagePath,
+      req.file.mimetype || "application/octet-stream",
+    );
+  } catch (error) {
+    await fs.unlink(req.file.path).catch(() => {});
+
+    throw new AppError(`Failed to store video: ${error.message}`, 502);
+  }
+
+  let video;
+
+  try {
+    video = await Video.create({
+      originalName: req.file.originalname,
+      filename: req.file.filename,
+      path: req.file.path,
+      storagePath,
+      processingStatus: "pending",
+    });
+  } catch (error) {
+    await Promise.allSettled([
+      removeFiles([storagePath]),
+      fs.unlink(req.file.path),
+    ]);
+
+    throw error;
+  }
+
+  // Keep the existing local processing pipeline.
   processVideo(video._id).catch((error) => {
     console.error("Background processing error:", error);
   });
@@ -37,7 +72,7 @@ const uploadVideo = async (req, res) => {
 
 const getVideoStatus = async (req, res) => {
   const video = await Video.findById(req.params.id).select(
-    "_id originalName processingStatus processingStage processingError totalFrames processedFrames"
+    "_id originalName processingStatus processingStage processingError totalFrames processedFrames",
   );
 
   if (!video) {
@@ -65,7 +100,10 @@ const retryFailedVideoFrames = async (req, res) => {
     throw new AppError("Video not found", 404);
   }
 
-  if (processVideo.isRunning(video._id) || video.processingStatus === "processing") {
+  if (
+    processVideo.isRunning(video._id) ||
+    video.processingStatus === "processing"
+  ) {
     throw new AppError("Video is already being processed", 409);
   }
 
@@ -134,7 +172,7 @@ const retryVideoProcessing = async (req, res) => {
         processedFrames: 0,
       },
     },
-    { new: true }
+    { new: true },
   );
 
   if (!video) {
@@ -153,11 +191,7 @@ const retryVideoProcessing = async (req, res) => {
 
   await Frame.deleteMany({ video: video._id });
 
-  const frameDirectory = path.join(
-    "uploads",
-    "frames",
-    video._id.toString()
-  );
+  const frameDirectory = path.join("uploads", "frames", video._id.toString());
 
   await cleanupDirectory(frameDirectory);
 
@@ -220,30 +254,48 @@ const deleteVideo = async (req, res) => {
     throw new AppError("Video not found", 404);
   }
 
-  if (
-    processVideo.isRunning(video._id) ||
-    video.processingStatus === "processing"
-  ) {
+  if (processVideo.isRunning(video._id)) {
     throw new AppError(
-      "Cannot delete a video while it is being processed",
-      409
+      "This video is actively being processed. Try deleting it again after processing stops.",
+      409,
     );
   }
 
+  const frames = await Frame.find({
+    video: video._id,
+  })
+    .select("storagePath")
+    .lean();
+
+  const storagePaths = [
+    video.storagePath,
+    ...frames.map((frame) => frame.storagePath),
+  ].filter(Boolean);
+
+  // Delete cloud objects in batches.
+  for (let i = 0; i < storagePaths.length; i += 100) {
+    await removeFiles(storagePaths.slice(i, i + 100));
+  }
+
+  // Delete local copies and associated frame files.
   await deleteVideoAssets(video);
-  await Frame.deleteMany({ video: video._id });
+
+  await Frame.deleteMany({
+    video: video._id,
+  });
+
   await Video.findByIdAndDelete(video._id);
 
   return res.status(200).json({
     success: true,
-    message: "Video deleted successfully",
+    message: "Video and associated files deleted successfully",
   });
 };
 
 const getVideos = async (req, res) => {
   const videos = await Video.find({})
     .select(
-      "_id originalName filename processingStatus processingStage totalFrames processedFrames processingError createdAt"
+      "_id originalName filename processingStatus processingStage totalFrames processedFrames processingError createdAt",
     )
     .sort({ createdAt: -1 })
     .limit(50)

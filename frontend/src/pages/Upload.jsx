@@ -1,12 +1,8 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 
 import api from "../services/api";
 
-const MAX_FILE_SIZE = 500 * 1024 * 1024;
+const MAX_FILE_SIZE = 49 * 1024 * 1024;
 
 const formatFileSize = (bytes) => {
   if (!bytes) return "0 MB";
@@ -69,9 +65,7 @@ const Upload = () => {
 
   const checkProcessingStatus = async (id) => {
     try {
-      const response = await api.get(
-        `/videos/${id}/status`
-      );
+      const response = await api.get(`/videos/${id}/status`);
 
       const video = response.data.video;
       const currentStatus = video.status;
@@ -84,26 +78,19 @@ const Upload = () => {
       setProcessedFrames(video.processedFrames || 0);
 
       if (currentStatus === "completed") {
-        setMessage(
-          "Your video is ready to search."
-        );
+        setMessage("Your video is ready to search.");
         return;
       }
 
-      if (
-        currentStatus === "completed_with_errors"
-      ) {
+      if (currentStatus === "completed_with_errors") {
         setMessage(
-          "Indexing completed, but some frames could not be analyzed."
+          "Indexing completed, but some frames could not be analyzed.",
         );
         return;
       }
 
       if (currentStatus === "failed") {
-        setMessage(
-          video.error ||
-            "Video processing failed."
-        );
+        setMessage(video.error || "Video processing failed.");
         return;
       }
 
@@ -111,14 +98,9 @@ const Upload = () => {
         checkProcessingStatus(id);
       }, 2000);
     } catch (error) {
-      console.error(
-        "Status check failed:",
-        error
-      );
+      console.error("Status check failed:", error);
 
-      setMessage(
-        "Unable to check processing status."
-      );
+      setMessage("Unable to check processing status.");
     }
   };
 
@@ -142,37 +124,26 @@ const Upload = () => {
 
       formData.append("video", file);
 
-      const response = await api.post(
-        "/videos/upload",
-        formData
-      );
+      const response = await api.post("/videos/upload", formData);
 
       const id = response.data.video.id;
 
       setVideoId(id);
-      setStatus(
-        response.data.video.processingStatus
-      );
+      setStatus(response.data.video.processingStatus);
 
       setStage("queued");
 
-      setMessage(
-        "Upload complete. Video processing started."
-      );
+      setMessage("Upload complete. Video processing started.");
 
       checkProcessingStatus(id);
     } catch (error) {
-      console.error(
-        "Upload failed:",
-        error
-      );
+      console.error("Upload failed:", error);
 
       setStatus("failed");
       setStage("failed");
 
       setMessage(
-        error.response?.data?.message ||
-          "Upload failed. Please try again."
+        error.response?.data?.message || "Upload failed. Please try again.",
       );
     } finally {
       setIsUploading(false);
@@ -180,12 +151,7 @@ const Upload = () => {
   };
 
   const progressPercentage =
-    totalFrames > 0
-      ? Math.min(
-          (processedFrames / totalFrames) * 100,
-          100
-        )
-      : 0;
+    totalFrames > 0 ? Math.min((processedFrames / totalFrames) * 100, 100) : 0;
 
   const getStageMessage = () => {
     switch (stage) {
@@ -222,8 +188,8 @@ const Upload = () => {
         </h1>
 
         <p className="mt-4 text-slate-400">
-          We'll extract frames, analyze them with AI,
-          and make your video searchable.
+          We'll extract frames, analyze them with AI, and make your video
+          searchable.
         </p>
       </div>
 
@@ -258,105 +224,85 @@ const Upload = () => {
           disabled={isUploading || !file}
           className="mt-6 w-full rounded-xl bg-blue-500 px-6 py-3 font-medium transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isUploading
-            ? "Uploading..."
-            : "Upload & Index Video"}
+          {isUploading ? "Uploading..." : "Upload & Index Video"}
         </button>
       </div>
 
       {/* Message */}
       {message && (
         <div className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-4">
-          <p className="text-sm text-slate-300">
-            {message}
-          </p>
+          <p className="text-sm text-slate-300">{message}</p>
         </div>
       )}
 
       {/* Processing Status */}
-      {status &&
-        status !== "uploading" &&
-        status !== "failed" && (
-          <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500">
-                  Processing status
-                </p>
+      {status && status !== "uploading" && status !== "failed" && (
+        <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-900 p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-slate-500">Processing status</p>
 
-                <p className="mt-1 text-lg font-semibold capitalize text-white">
-                  {status.replaceAll("_", " ")}
-                </p>
-              </div>
-
-              {status === "completed" && (
-                <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-400">
-                  Ready
-                </span>
-              )}
-
-              {status ===
-                "completed_with_errors" && (
-                <span className="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
-                  Partial
-                </span>
-              )}
+              <p className="mt-1 text-lg font-semibold capitalize text-white">
+                {status.replaceAll("_", " ")}
+              </p>
             </div>
 
-            {/* Current Stage */}
-            {stage && (
-              <div className="mt-4">
-                <p className="text-sm font-medium text-slate-300">
-                  {getStageMessage()}
-                </p>
-              </div>
+            {status === "completed" && (
+              <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-400">
+                Ready
+              </span>
             )}
 
-            {/* AI Progress */}
-            {totalFrames > 0 &&
-              stage === "analyzing" && (
-                <div className="mt-5">
-                  <div className="mb-2 flex justify-between text-sm">
-                    <span className="text-slate-400">
-                      AI analysis
-                    </span>
-
-                    <span className="text-slate-300">
-                      {processedFrames} /{" "}
-                      {totalFrames}
-                    </span>
-                  </div>
-
-                  <div className="h-2 overflow-hidden rounded-full bg-slate-800">
-                    <div
-                      className="h-full rounded-full bg-blue-500 transition-all duration-500"
-                      style={{
-                        width: `${progressPercentage}%`,
-                      }}
-                    />
-                  </div>
-
-                  <p className="mt-2 text-xs text-slate-500">
-                    {Math.round(
-                      progressPercentage
-                    )}
-                    % analyzed
-                  </p>
-                </div>
-              )}
+            {status === "completed_with_errors" && (
+              <span className="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
+                Partial
+              </span>
+            )}
           </div>
-        )}
+
+          {/* Current Stage */}
+          {stage && (
+            <div className="mt-4">
+              <p className="text-sm font-medium text-slate-300">
+                {getStageMessage()}
+              </p>
+            </div>
+          )}
+
+          {/* AI Progress */}
+          {totalFrames > 0 && stage === "analyzing" && (
+            <div className="mt-5">
+              <div className="mb-2 flex justify-between text-sm">
+                <span className="text-slate-400">AI analysis</span>
+
+                <span className="text-slate-300">
+                  {processedFrames} / {totalFrames}
+                </span>
+              </div>
+
+              <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className="h-full rounded-full bg-blue-500 transition-all duration-500"
+                  style={{
+                    width: `${progressPercentage}%`,
+                  }}
+                />
+              </div>
+
+              <p className="mt-2 text-xs text-slate-500">
+                {Math.round(progressPercentage)}% analyzed
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Error State */}
       {status === "failed" && (
         <div className="mt-5 rounded-2xl border border-red-500/20 bg-red-500/5 p-5">
-          <p className="font-medium text-red-400">
-            Something went wrong
-          </p>
+          <p className="font-medium text-red-400">Something went wrong</p>
 
-          <p className="mt-1 text-sm text-slate-400">
-            {message}
-          </p>
+          <p className="mt-1 text-sm text-slate-400">{message}</p>
         </div>
       )}
 

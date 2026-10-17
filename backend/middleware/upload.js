@@ -25,8 +25,8 @@ const fileFilter = (req, file, cb) => {
   if (!allowedTypes.includes(file.mimetype)) {
     return cb(
       new Error(
-        "Unsupported video format. Allowed formats: MP4, WebM, MOV, MPEG."
-      )
+        "Unsupported video format. Allowed formats: MP4, WebM, MOV, MPEG.",
+      ),
     );
   }
 
@@ -37,7 +37,7 @@ const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 500 * 1024 * 1024,
+    fileSize: 49 * 1024 * 1024,
     files: 1,
   },
 });

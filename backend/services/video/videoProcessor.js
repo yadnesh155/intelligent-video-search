@@ -8,8 +8,75 @@ const cleanupDirectory = require("../../utils/cleanupDirectory");
 const extractFrames = require("./frameExtractor");
 const { analyzeFrames } = require("../ai/frameAnalyzer");
 
-// Tracks jobs running in this Node.js process, preventing duplicate work.
+const {
+  uploadLocalFile,
+  downloadToFile,
+} = require("../storage/supabaseStorage.service");
+
 const activeJobs = new Set();
+
+const localPathFor = (storedPath) => path.resolve(storedPath);
+
+const ensureLocalVideo = async (video) => {
+  const localVideoPath = localPathFor(video.path);
+
+  if (fs.existsSync(localVideoPath)) {
+    return localVideoPath;
+  }
+
+  if (!video.storagePath) {
+    throw new Error(
+      "Local video is missing and no Supabase storage path exists."
+    );
+  }
+
+  await fs.promises.mkdir(path.dirname(localVideoPath), {
+    recursive: true,
+  });
+
+  await downloadToFile(video.storagePath, localVideoPath);
+
+  return localVideoPath;
+};
+
+const restoreLocalFrames = async (frames) => {
+  for (const frame of frames) {
+    const localFramePath = localPathFor(frame.framePath);
+
+    if (fs.existsSync(localFramePath)) {
+      continue;
+    }
+
+    if (!frame.storagePath) {
+      return false;
+    }
+
+    try {
+      await fs.promises.mkdir(path.dirname(localFramePath), {
+        recursive: true,
+      });
+
+      await downloadToFile(
+        frame.storagePath,
+        localFramePath
+      );
+    } catch (error) {
+      console.warn(
+        `Could not restore frame at ${frame.timestamp}s:`,
+        error.message
+      );
+
+      return false;
+    }
+  }
+
+  return (
+    frames.length > 0 &&
+    frames.every((frame) =>
+      fs.existsSync(localPathFor(frame.framePath))
+    )
+  );
+};
 
 const launchProcessing = (videoId, allowedStatuses) => {
   const id = String(videoId);
@@ -18,7 +85,10 @@ const launchProcessing = (videoId, allowedStatuses) => {
     return {
       started: false,
       reason: "already_running",
-      promise: Promise.resolve({ skipped: true, reason: "already_running" }),
+      promise: Promise.resolve({
+        skipped: true,
+        reason: "already_running",
+      }),
     };
   }
 
@@ -26,8 +96,10 @@ const launchProcessing = (videoId, allowedStatuses) => {
 
   const promise = runProcessing(videoId, allowedStatuses)
     .catch((error) => {
-      // runProcessing handles errors after a video has been claimed.
-      console.error(`Unexpected background processing error for ${id}:`, error);
+      console.error(
+        `Unexpected background processing error for ${id}:`,
+        error
+      );
     })
     .finally(() => {
       activeJobs.delete(id);
@@ -40,8 +112,6 @@ const runProcessing = async (videoId, allowedStatuses) => {
   let video = null;
 
   try {
-    // Normal uploads claim "pending" videos. Resume can also claim stale
-    // "processing" videos; the in-process lock above prevents double work.
     video = await Video.findOneAndUpdate(
       {
         _id: videoId,
@@ -58,18 +128,7 @@ const runProcessing = async (videoId, allowedStatuses) => {
     );
 
     if (!video) {
-      const currentVideo = await Video.findById(videoId);
-
-      if (!currentVideo) {
-        console.warn(`Cannot process video ${videoId}: video not found.`);
-      } else {
-        console.log(
-          `Skipping video ${currentVideo.originalName}; current status is "${currentVideo.processingStatus}".`
-        );
-      }
-
-      // Crucially, don't mark a video failed just because another job owns it
-      // or its status changed before this worker claimed it.
+      console.log(`Skipping video ${videoId}; it cannot be claimed.`);
       return { skipped: true };
     }
 
@@ -79,20 +138,19 @@ const runProcessing = async (videoId, allowedStatuses) => {
       video._id.toString()
     );
 
-    console.log(`Starting/resuming processing for: ${video.originalName}`);
+    console.log(
+      `Starting/resuming processing for: ${video.originalName}`
+    );
 
-    // Reuse extracted frames whenever their files are still present.
-    let savedFrames = await Frame.find({ video: video._id }).sort({
-      timestamp: 1,
-    });
+    const localVideoPath = await ensureLocalVideo(video);
 
-    const existingFrameFilesAreUsable =
-      savedFrames.length > 0 &&
-      savedFrames.every((frame) =>
-        fs.existsSync(path.resolve(frame.framePath))
-      );
+    let savedFrames = await Frame.find({
+      video: video._id,
+    }).sort({ timestamp: 1 });
 
-    if (!existingFrameFilesAreUsable) {
+    const framesAvailable = await restoreLocalFrames(savedFrames);
+
+    if (!framesAvailable) {
       await Video.findByIdAndUpdate(video._id, {
         processingStage: "extracting",
       });
@@ -100,26 +158,54 @@ const runProcessing = async (videoId, allowedStatuses) => {
       let extractedFrames;
 
       try {
-        extractedFrames = await extractFrames(video.path, outputDirectory);
+        extractedFrames = await extractFrames(
+          localVideoPath,
+          outputDirectory
+        );
       } catch (error) {
         await cleanupDirectory(outputDirectory);
         throw error;
       }
 
-      if (!extractedFrames || extractedFrames.length === 0) {
-        throw new Error("FFmpeg did not extract any frames from this video.");
+      if (!extractedFrames?.length) {
+        throw new Error("FFmpeg did not extract any frames.");
       }
 
-      // Upsert by video + timestamp. Existing descriptions and embeddings are
-      // preserved, so a resume doesn't throw away successfully analysed work.
-      const operations = extractedFrames.map((frame) => ({
+      const framesWithStorage = [];
+
+      for (let i = 0; i < extractedFrames.length; i += 1) {
+        const frame = extractedFrames[i];
+
+        const objectPath =
+          `frames/${video._id}/${path.basename(frame.path)}`;
+
+        const storagePath = await uploadLocalFile(
+          frame.path,
+          objectPath,
+          "image/jpeg"
+        );
+
+        framesWithStorage.push({
+          ...frame,
+          storagePath,
+        });
+
+        console.log(
+          `Stored frame ${i + 1}/${extractedFrames.length} in Supabase.`
+        );
+      }
+
+      const operations = framesWithStorage.map((frame) => ({
         updateOne: {
           filter: {
             video: video._id,
             timestamp: frame.timestamp,
           },
           update: {
-            $set: { framePath: frame.path },
+            $set: {
+              framePath: frame.path,
+              storagePath: frame.storagePath,
+            },
             $setOnInsert: {
               video: video._id,
               timestamp: frame.timestamp,
@@ -136,22 +222,25 @@ const runProcessing = async (videoId, allowedStatuses) => {
 
       await Frame.bulkWrite(operations, { ordered: false });
 
-      const extractedTimestamps = extractedFrames.map((frame) => frame.timestamp);
+      const timestamps = framesWithStorage.map(
+        (frame) => frame.timestamp
+      );
+
       await Frame.deleteMany({
         video: video._id,
-        timestamp: { $nin: extractedTimestamps },
+        timestamp: { $nin: timestamps },
       });
 
-      savedFrames = await Frame.find({ video: video._id }).sort({
-        timestamp: 1,
-      });
+      savedFrames = await Frame.find({
+        video: video._id,
+      }).sort({ timestamp: 1 });
     } else {
       console.log(
-        `Found ${savedFrames.length} saved frames; reusing them and skipping FFmpeg.`
+        `Reusing ${savedFrames.length} existing frames.`
       );
     }
 
-    if (savedFrames.length === 0) {
+    if (!savedFrames.length) {
       throw new Error("No frame records are available for analysis.");
     }
 
@@ -161,8 +250,10 @@ const runProcessing = async (videoId, allowedStatuses) => {
       processingError: null,
     });
 
-    // analyzeFrames skips frames that already have a description and embedding.
-    const analysisResult = await analyzeFrames(savedFrames, video._id);
+    const analysisResult = await analyzeFrames(
+      savedFrames,
+      video._id
+    );
 
     const finalStatus =
       analysisResult.failedCount > 0
@@ -181,17 +272,19 @@ const runProcessing = async (videoId, allowedStatuses) => {
     });
 
     console.log(
-      `Processing ${finalStatus} for: ${video.originalName} (${analysisResult.processedCount}/${savedFrames.length} indexed).`
+      `Processing ${finalStatus} for ${video.originalName}.`
     );
 
-    return { skipped: false, ...analysisResult };
+    return {
+      skipped: false,
+      ...analysisResult,
+    };
   } catch (error) {
     console.error(
       `Processing failed for video ${videoId}:`,
       error.message
     );
 
-    // Only mark a video failed if this worker successfully claimed it.
     if (video) {
       await Video.findByIdAndUpdate(videoId, {
         processingStatus: "failed",
@@ -202,19 +295,19 @@ const runProcessing = async (videoId, allowedStatuses) => {
       throw error;
     }
 
-    return { skipped: false, failed: true, error: error.message };
+    return {
+      skipped: false,
+      failed: true,
+      error: error.message,
+    };
   }
 };
 
-// Start a brand-new upload or retry using only the normal pending state.
-const processVideo = (videoId) => {
-  return launchProcessing(videoId, ["pending"]).promise;
-};
+const processVideo = (videoId) =>
+  launchProcessing(videoId, ["pending"]).promise;
 
-// Resume pending/stale processing records. Completed frames are preserved.
-processVideo.resume = (videoId) => {
-  return launchProcessing(videoId, ["pending", "processing"]);
-};
+processVideo.resume = (videoId) =>
+  launchProcessing(videoId, ["pending", "processing"]);
 
 processVideo.runManaged = (videoId, task) => {
   const id = String(videoId);
@@ -223,7 +316,7 @@ processVideo.runManaged = (videoId, task) => {
     return {
       started: false,
       reason: "already_running",
-      promise: Promise.resolve({ skipped: true, reason: "already_running" }),
+      promise: Promise.resolve({ skipped: true }),
     };
   }
 
@@ -238,6 +331,7 @@ processVideo.runManaged = (videoId, task) => {
   return { started: true, promise };
 };
 
-processVideo.isRunning = (videoId) => activeJobs.has(String(videoId));
+processVideo.isRunning = (videoId) =>
+  activeJobs.has(String(videoId));
 
 module.exports = processVideo;

@@ -409,15 +409,12 @@ const Library = () => {
 
                     <button
                       onClick={() => handleDelete(video)}
-
-                      disabled={isBusy || !canDelete}
-
+                      disabled={isBusy}
                       title={
-                        !canDelete
-                          ? "Wait for processing to finish"
+                        isBusy
+                          ? "Please wait"
                           : "Delete video and indexed frames"
                       }
-
                       className="rounded-lg border border-slate-700 px-3 py-2 text-sm font-medium text-slate-300 transition hover:border-red-500/50 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Delete

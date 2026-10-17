@@ -13,6 +13,11 @@ const frameSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    
+    storagePath: {
+    type: String,
+    default: null,
+    },
 
     timestamp: {
       type: Number,

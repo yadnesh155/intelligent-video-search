@@ -1,7 +1,10 @@
-
 const Frame = require("../../models/Frame");
 const Video = require("../../models/Video");
 const generateEmbedding = require("../ai/embedding.service");
+
+const {
+  createSignedUrl,
+} = require("../storage/supabaseStorage.service");
 
 const RESULT_LIMIT = 20;
 const RRF_K = 60;
@@ -16,20 +19,17 @@ const searchByMeaning = async (
 ) => {
   const queryEmbedding = await generateEmbedding(query);
 
-  // Run semantic and keyword search in parallel
   const [vectorResults, textResults] = await Promise.all([
     runVectorSearch(queryEmbedding, limit),
     runTextSearch(query, limit),
   ]);
 
-  // Combine both ranked result lists
   const combinedResults = combineResults(
     vectorResults,
     textResults,
     limit
   );
 
-  // Add video names and playable URLs
   return attachVideoInformation(combinedResults);
 };
 
@@ -49,6 +49,7 @@ const runVectorSearch = async (queryEmbedding, limit) => {
         _id: 1,
         video: 1,
         framePath: 1,
+        storagePath: 1,
         timestamp: 1,
         description: 1,
         processingStatus: 1,
@@ -66,7 +67,6 @@ const runVectorSearch = async (queryEmbedding, limit) => {
           $exists: true,
           $nin: [null, "", "Pending AI analysis"],
         },
-        // Also allow older valid documents without this field.
         processingStatus: {
           $in: ["completed", null],
         },
@@ -111,7 +111,6 @@ const combineResults = (
 ) => {
   const resultMap = new Map();
 
-  // Add semantic-search rankings
   vectorResults.forEach((result, index) => {
     const id = result._id.toString();
 
@@ -123,7 +122,6 @@ const combineResults = (
     });
   });
 
-  // Add keyword-search rankings
   textResults.forEach((result, index) => {
     const id = result._id.toString();
     const existing = resultMap.get(id);
@@ -163,7 +161,7 @@ const attachVideoInformation = async (results) => {
       $in: videoIds,
     },
   })
-    .select("_id originalName filename")
+    .select("_id originalName filename storagePath")
     .lean();
 
   const videoMap = new Map(
@@ -173,28 +171,85 @@ const attachVideoInformation = async (results) => {
     ])
   );
 
-  return results.map((result) => {
-    const video = result.video
-      ? videoMap.get(result.video.toString())
-      : null;
+  // Generate one signed URL per video, even if multiple
+  // search results refer to the same video.
+  const videoUrlPromises = new Map();
 
-    return {
-      frameId: result._id,
-      videoId: video?._id || null,
-      videoName: video?.originalName || null,
-      videoUrl: video
-        ? `/uploads/videos/${video.filename}`
-        : null,
-      frameUrl: result.framePath
+  for (const video of videos) {
+    const id = video._id.toString();
+
+    if (video.storagePath) {
+      videoUrlPromises.set(
+        id,
+        createSignedUrl(video.storagePath, 3600).catch(
+          (error) => {
+            console.error(
+              `Could not create video URL for ${video.originalName}:`,
+              error.message
+            );
+            return null;
+          }
+        )
+      );
+    } else {
+      // Compatibility with older videos stored locally.
+      videoUrlPromises.set(
+        id,
+        Promise.resolve(
+          `/uploads/videos/${video.filename}`
+        )
+      );
+    }
+  }
+
+  const frameUrlPromises = results.map((result) => {
+    if (result.storagePath) {
+      return createSignedUrl(
+        result.storagePath,
+        3600
+      ).catch((error) => {
+        console.error(
+          `Could not create frame URL for ${result._id}:`,
+          error.message
+        );
+        return null;
+      });
+    }
+
+    // Compatibility with existing local frames.
+    return Promise.resolve(
+      result.framePath
         ? `/${result.framePath.replace(/\\/g, "/")}`
-        : null,
-      timestamp: result.timestamp,
-      description: result.description,
-      vectorScore: result.vectorScore || 0,
-      textScore: result.textScore || 0,
-      rrfScore: result.rrfScore,
-    };
+        : null
+    );
   });
+
+  const frameUrls = await Promise.all(frameUrlPromises);
+
+  return Promise.all(
+    results.map(async (result, index) => {
+      const video = result.video
+        ? videoMap.get(result.video.toString())
+        : null;
+
+      const videoUrl = video
+        ? await videoUrlPromises.get(video._id.toString())
+        : null;
+
+      return {
+        frameId: result._id,
+        videoId: video?._id || null,
+        videoName: video?.originalName || null,
+        videoUrl,
+        frameUrl: frameUrls[index],
+        timestamp: result.timestamp,
+        description: result.description,
+        vectorScore: result.vectorScore || 0,
+        textScore: result.textScore || 0,
+        rrfScore: result.rrfScore,
+      };
+    })
+  );
 };
 
 module.exports = searchByMeaning;
