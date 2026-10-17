@@ -2,46 +2,43 @@ const fs = require("fs");
 const path = require("path");
 
 const backendRoot = path.resolve(__dirname, "..");
-const uploadsRoot = path.resolve(
-  backendRoot,
-  "uploads"
-);
+const uploadsRoot = path.resolve(backendRoot, "uploads");
 
-const getSafeUploadPath = (relativePath) => {
-  const absolutePath = path.resolve(
-    backendRoot,
-    relativePath
-  );
+const getSafeUploadPath = (storedPath) => {
+  if (
+    typeof storedPath !== "string" ||
+    storedPath.trim() === ""
+  ) {
+    return null;
+  }
+
+  const absolutePath = path.isAbsolute(storedPath)
+    ? path.resolve(storedPath)
+    : path.resolve(backendRoot, storedPath);
 
   const isInsideUploads =
     absolutePath === uploadsRoot ||
-    absolutePath.startsWith(
-      `${uploadsRoot}${path.sep}`
-    );
+    absolutePath.startsWith(`${uploadsRoot}${path.sep}`);
 
-  if (!isInsideUploads) {
-    throw new Error(
-      "Invalid upload path detected."
-    );
-  }
-
-  return absolutePath;
+  // Skip stale or unsafe paths instead of deleting
+  // files outside the current uploads directory.
+  return isInsideUploads ? absolutePath : null;
 };
 
 const deleteVideoAssets = async (video) => {
-  const videoFilePath = getSafeUploadPath(
-    video.path
-  );
+  const videoFilePath = getSafeUploadPath(video.path);
+
+  if (videoFilePath) {
+    await fs.promises.rm(videoFilePath, {
+      force: true,
+    });
+  }
 
   const frameDirectory = path.join(
     uploadsRoot,
     "frames",
     video._id.toString()
   );
-
-  await fs.promises.rm(videoFilePath, {
-    force: true,
-  });
 
   await fs.promises.rm(frameDirectory, {
     recursive: true,
